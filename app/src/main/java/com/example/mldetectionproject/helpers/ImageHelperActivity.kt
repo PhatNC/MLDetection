@@ -6,30 +6,46 @@ import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.Manifest
 import android.app.Activity
+import android.content.ContentResolver
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.provider.MediaStore
 import android.util.Log
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.widget.AppCompatImageView
+import com.example.mldetectionproject.MainActivity
 import com.example.mldetectionproject.R
+import com.example.mldetectionproject.ml.Detector
+import com.example.mldetectionproject.ml.MobilenetV110224Quant
 import com.google.android.gms.tasks.OnSuccessListener
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
+import org.tensorflow.lite.DataType
+import org.tensorflow.lite.support.image.TensorImage
+import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
+import java.io.BufferedReader
+import java.io.File
 import java.io.IOException
+import java.io.InputStream
+import java.io.InputStreamReader
 
 class ImageHelperActivity : AppCompatActivity() {
+    private lateinit var resultTextView: TextView
     private lateinit var pickImage: FloatingActionButton
     private lateinit var selectedImage: AppCompatImageView
     private lateinit var imageLabeler: ImageLabeler
-
+    private lateinit var bitmap: Bitmap
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_image_helper)
+
+
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Android 13+
@@ -51,7 +67,7 @@ class ImageHelperActivity : AppCompatActivity() {
 
         pickImage = findViewById(R.id.pick_image)
         selectedImage = findViewById(R.id.selected_image)
-
+        resultTextView = findViewById(R.id.textView)
         pickImage.setOnClickListener {
             val pickImg = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.INTERNAL_CONTENT_URI)
             changeImage.launch(pickImg)
@@ -78,14 +94,16 @@ class ImageHelperActivity : AppCompatActivity() {
                     try {
                         val contentResolver = applicationContext.contentResolver
                         val inputStream = contentResolver.openInputStream(imgUri)
-
                         if (inputStream != null) {
-                            println("HEHEHEH")
-                            val bitmap = BitmapFactory.decodeStream(inputStream)
-                            // Now, 'bitmap' contains the decoded image from 'imgUri'
-                            // You can use 'bitmap' as needed
-                            runClassification(bitmap)
+                            bitmap = BitmapFactory.decodeStream(inputStream)
+                            inputStream?.close()
 
+                            if (bitmap != null) {
+                                // Use the loaded bitmap
+                                runClassification()
+                            } else {
+                                // Handle the case where the bitmap couldn't be loaded
+                            }
                         } else {
                             // Handle the case where 'inputStream' is null
                         }
@@ -105,23 +123,71 @@ class ImageHelperActivity : AppCompatActivity() {
         Log.d(ImageHelperActivity::class.java.simpleName, "Grant result for ${permissions[0]} is ${grantResults[0]}")
     }
 
-    private fun runClassification(bitmap: Bitmap) {
-        println("runClassification")
-        println(bitmap)
+    private fun runClassification() {
+        try {
+            val model = MobilenetV110224Quant.newInstance(this@ImageHelperActivity)
+
+            // Load the input image from a file or another source
+            val inputBitmap: Bitmap = bitmap // Replace this with your actual loading code
+
+            // Resize the input image to match the model's expected size
+            val resizedBitmap = Bitmap.createScaledBitmap(inputBitmap, 224, 224, true)
+
+            // Create inputs for reference.
+            val inputFeature0 = TensorBuffer.createFixedSize(intArrayOf(1, 224, 224, 3), DataType.UINT8)
+            inputFeature0.loadBuffer(TensorImage.fromBitmap(resizedBitmap).buffer)
+
+            // Runs model inference and gets the result.
+            val outputs = model.process(inputFeature0)
+            val outputFeature0 = outputs.outputFeature0AsTensorBuffer
+
+            val labelIndex = getMax(outputFeature0.floatArray)
+
+            var labels = arrayOf<String>()
+
+            try {
+                val inputStream: InputStream = assets.open("labels.txt")
+                val lineList = mutableListOf<String>()
+
+                inputStream.bufferedReader().forEachLine { lineList.add(it) }
+                labels = lineList.toTypedArray()
+
+            } catch (e: IOException) {
+                e.printStackTrace()
+                // Handle the exception
+            }
+
+            resultTextView.text = labels[labelIndex]
+            // Releases model resources if no longer used.
+            model.close()
+        } catch (e: IllegalArgumentException) {
+            // Handle the specific exception
+            e.printStackTrace() // Print the exception for debugging
+            // Add your custom error handling logic here
+        }
+    }
+
+    private fun runClassificationMLKit() {
+        // Using imageLabeler - mlkit model
         val inputImage: InputImage = InputImage.fromBitmap(bitmap, 0)
         imageLabeler.process(inputImage)
             .addOnSuccessListener { labels ->
                 // Handle the labels here
                 print("labels")
                 println(labels)
+                var tempStrResult: String = ""
+
                 for (label in labels) {
                     val labelText = label.text
                     val confidence = label.confidence
                     // Process label information as needed
 
-                    println("labelText $labelText")
-                    println("labelText $confidence")
+                    tempStrResult += "label: $labelText confidence: $confidence \n"
                 }
+
+                println("tempStrResult $tempStrResult")
+
+                resultTextView.text = tempStrResult
             }
             .addOnFailureListener { e ->
                 // Handle any errors here
@@ -129,4 +195,17 @@ class ImageHelperActivity : AppCompatActivity() {
             }
     }
 
+    private fun runClassificationCustomModel() {
+        
+    }
+    private fun getMax(arr: FloatArray): Int {
+        var max = 0
+        for (i in arr.indices) {
+            // Your code here
+            if (arr[i] > arr[max]) {
+                max = i
+            }
+        }
+        return max
+    }
 }

@@ -33,6 +33,9 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+    buildFeatures {
+        mlModelBinding = true
+    }
 }
 
 dependencies {
@@ -44,6 +47,8 @@ dependencies {
 
     // image classification
     implementation("com.google.mlkit:image-labeling:17.0.7")
+    implementation("org.tensorflow:tensorflow-lite-support:0.1.0")
+    implementation("org.tensorflow:tensorflow-lite-metadata:0.1.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
