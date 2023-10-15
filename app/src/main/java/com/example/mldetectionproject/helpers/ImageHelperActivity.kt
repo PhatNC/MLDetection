@@ -1,38 +1,34 @@
 package com.example.mldetectionproject.helpers
 
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.appcompat.app.AppCompatActivity
-import android.os.Bundle
 import android.Manifest
 import android.app.Activity
-import android.content.ContentResolver
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
+import android.os.Build
+import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatImageView
-import com.example.mldetectionproject.MainActivity
 import com.example.mldetectionproject.R
-import com.example.mldetectionproject.ml.Detector
+import com.example.mldetectionproject.ml.KangarooDetector
 import com.example.mldetectionproject.ml.MobilenetV110224Quant
-import com.google.android.gms.tasks.OnSuccessListener
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import org.tensorflow.lite.DataType
+import org.tensorflow.lite.support.common.SupportPreconditions
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
-import java.io.BufferedReader
-import java.io.File
 import java.io.IOException
 import java.io.InputStream
-import java.io.InputStreamReader
 
 class ImageHelperActivity : AppCompatActivity() {
     private lateinit var resultTextView: TextView
@@ -195,8 +191,108 @@ class ImageHelperActivity : AppCompatActivity() {
             }
     }
 
+    private fun computeFlatSize(shape: IntArray): Int {
+        SupportPreconditions.checkNotNull(shape, "Shape cannot be null.")
+        var prod = 1
+        val var3 = shape.size
+        for (var4 in 0 until var3) {
+            val s = shape[var4]
+            prod *= s
+        }
+        return prod
+    }
+
     private fun runClassificationCustomModel() {
-        
+        try {
+
+            val model = KangarooDetector.newInstance(this@ImageHelperActivity)
+
+            // Creates inputs for reference.
+            val inputFeature0 = TensorBuffer.createFixedSize(intArrayOf(1, 320, 320, 3), DataType.FLOAT32)
+
+            val resizedBitmap = Bitmap.createScaledBitmap(bitmap, 320, 320, true)
+            val image = TensorImage(DataType.FLOAT32)
+            image.load(resizedBitmap)
+
+//            val shapeString = inputFeature0.shape.joinToString(", ")
+//            println("shapeString $shapeString")
+//            println("computeFlatSize ${computeFlatSize(inputFeature0.shape)}")
+//            println("inputFeature0 typeSize ${inputFeature0.typeSize} flatSize ${inputFeature0.flatSize} buffer.limit ${image.buffer.limit()}")
+
+            inputFeature0.loadBuffer(image.buffer)
+
+
+
+            // Runs model inference and gets result.
+            val outputs = model.process(inputFeature0)
+            val outputFeature0 = outputs.outputFeature0AsTensorBuffer
+            val outputFeature1 = outputs.outputFeature1AsTensorBuffer
+            val outputFeature2 = outputs.outputFeature2AsTensorBuffer
+            val outputFeature3 = outputs.outputFeature3AsTensorBuffer
+
+            val output0 = outputFeature0.floatArray
+            val output1 = outputFeature1.floatArray
+            val output2 = outputFeature2.floatArray
+            val output3 = outputFeature3.floatArray
+
+            println("--OUTPUT 0--")
+            logFloatArray(output0)
+            println("--OUTPUT 1--")
+            logFloatArray(output1)
+            println("--OUTPUT 2--")
+            logFloatArray(output2)
+            println("--OUTPUT 3--")
+            logFloatArray(output3)
+
+            try {
+                val imW= bitmap.width
+                val imH = bitmap.height
+
+                println("imageWidth: $imW imgHeight: $imH")
+                // Define the minimum confidence threshold for detections
+                val minConf = 0.6
+
+                // Access the output arrays you've obtained
+                val boundingBoxes = output0 // Adjust as needed
+                val classIndices = output1 // Adjust as needed
+                val scores = output2 // Adjust as needed
+
+                val detections = mutableListOf<Rect>()
+
+                for (i in boundingBoxes.indices step 4) {
+                    println("i: $i")
+                    val score = scores[i / 4]
+                    println("score: $score")
+                    if (score > minConf) {
+                        val left = (boundingBoxes[i] * imW).toInt()
+                        val top = (boundingBoxes[i + 1] * imH).toInt()
+                        val right = (boundingBoxes[i + 2] * imW).toInt()
+                        val bottom = (boundingBoxes[i + 3] * imH).toInt()
+
+                        // Draw bounding box and label
+//                        Imgproc.rectangle(image, Point(left.toDouble(), top.toDouble()), Point(right.toDouble(), bottom.toDouble()), Scalar(10.0, 255.0, 0.0), 2)
+                        val objectIndex = classIndices[i / 4].toInt() // Replace with your labels array
+                        val label = "$objectIndex: ${(score * 100).toInt()}%"
+//                        Imgproc.putText(image, label, Point(left.toDouble(), (top - 7).toDouble()), Imgproc.FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0.0, 0.0, 0.0), 2)
+                        detections.add(Rect(left, top, right - left, bottom - top))
+
+                        val textStr = "left $left, top $top, right $right, bottom $bottom"
+                        resultTextView.text = textStr
+                    }
+                }
+            } catch (e: ArrayIndexOutOfBoundsException) {
+                e.printStackTrace()
+            }
+
+
+            // Releases model resources if no longer used.
+            model.close()
+
+        } catch (e: IllegalArgumentException) {
+            // Handle the specific exception
+            e.printStackTrace() // Print the exception for debugging
+            // Add your custom error handling logic here
+        }
     }
     private fun getMax(arr: FloatArray): Int {
         var max = 0
@@ -208,4 +304,12 @@ class ImageHelperActivity : AppCompatActivity() {
         }
         return max
     }
+
+    private fun logFloatArray(floatArray: FloatArray) {
+        println("Logging FloatArray:")
+        for (value in floatArray) {
+            println(value)
+        }
+    }
+
 }
